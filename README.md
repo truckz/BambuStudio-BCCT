@@ -15,6 +15,17 @@ The implementation is based on Bambu Studio commit `bdfd004de8e9` (version `02.0
 - `output/`: generated 3MF and pre-sliced G-code 3MF test files.
 - `LICENSE`: Bambu Studio's upstream AGPL-3.0 license.
 
+### 42 mm visual test
+
+The `BCCT_42mm_Visual_Cube_With_Base` files are a native 42 × 42 × 42 mm test model, not a scaled 3-inch object. Its print settings are:
+
+- BCCT sparse infill at 5%.
+- 0.60 mm sparse-infill line width with a 0.4 mm nozzle.
+- Three 0.16 mm bottom layers for a 0.48 mm foundation.
+- Zero side walls and zero top layers.
+
+Open the ordinary `.3mf` with the BCCT-enabled source build to inspect or reslice it. Open the `_OFFICIAL_SEND.gcode.3mf` with an officially signed Bambu Studio release to send the already-sliced job to the printer. The send copy contains the same G-code; only its stored pattern label is changed to avoid rejection by the official build.
+
 ## Geometry status
 
 Directly reproduced from the paper:

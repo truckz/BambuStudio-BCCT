@@ -1,0 +1,86 @@
+solid BCCT_42mm_Visual_Cube
+  facet normal 0 0 -1
+    outer loop
+      vertex 0 0 0
+      vertex 42 42 0
+      vertex 42 0 0
+    endloop
+  endfacet
+  facet normal 0 0 -1
+    outer loop
+      vertex 0 0 0
+      vertex 0 42 0
+      vertex 42 42 0
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 0 0 42
+      vertex 42 0 42
+      vertex 42 42 42
+    endloop
+  endfacet
+  facet normal 0 0 1
+    outer loop
+      vertex 0 0 42
+      vertex 42 42 42
+      vertex 0 42 42
+    endloop
+  endfacet
+  facet normal 0 -1 0
+    outer loop
+      vertex 0 0 0
+      vertex 42 0 0
+      vertex 42 0 42
+    endloop
+  endfacet
+  facet normal 0 -1 0
+    outer loop
+      vertex 0 0 0
+      vertex 42 0 42
+      vertex 0 0 42
+    endloop
+  endfacet
+  facet normal 1 0 0
+    outer loop
+      vertex 42 0 0
+      vertex 42 42 0
+      vertex 42 42 42
+    endloop
+  endfacet
+  facet normal 1 0 0
+    outer loop
+      vertex 42 0 0
+      vertex 42 42 42
+      vertex 42 0 42
+    endloop
+  endfacet
+  facet normal 0 1 0
+    outer loop
+      vertex 42 42 0
+      vertex 0 42 0
+      vertex 0 42 42
+    endloop
+  endfacet
+  facet normal 0 1 0
+    outer loop
+      vertex 42 42 0
+      vertex 0 42 42
+      vertex 42 42 42
+    endloop
+  endfacet
+  facet normal -1 0 0
+    outer loop
+      vertex 0 42 0
+      vertex 0 0 0
+      vertex 0 0 42
+    endloop
+  endfacet
+  facet normal -1 0 0
+    outer loop
+      vertex 0 42 0
+      vertex 0 0 42
+      vertex 0 42 42
+    endloop
+  endfacet
+endsolid BCCT_42mm_Visual_Cube
