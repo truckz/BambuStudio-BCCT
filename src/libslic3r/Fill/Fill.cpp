@@ -818,6 +818,7 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
         case ipZigZag:
         case ipCrossZag:
         case ip2DLattice:
+		case ipBCCT:
 		case ipLockedZag: break;
         }
 

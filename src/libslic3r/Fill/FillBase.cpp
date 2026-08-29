@@ -15,6 +15,7 @@
 #include "FillConcentric.hpp"
 #include "FillHoneycomb.hpp"
 #include "Fill3DHoneycomb.hpp"
+#include "FillBCCT.hpp"
 #include "FillGyroid.hpp"
 #include "FillPlanePath.hpp"
 #include "FillLine.hpp"
@@ -62,6 +63,7 @@ Fill* Fill::new_from_type(const InfillPattern type)
     case ipFloatingConcentric:  return new FillFloatingConcentric();
     case ipLockedZag:           return new FillLockedZag();
     case ip2DLattice:           return new Fill2DLattice();
+    case ipBCCT:                return new FillBCCT();
     default: throw Slic3r::InvalidArgument("unknown type");
     }
 }

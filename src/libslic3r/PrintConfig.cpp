@@ -240,7 +240,8 @@ static t_config_enum_values s_keys_map_InfillPattern {
     { "zigzag",             ipZigZag },
     { "crosszag",           ipCrossZag },
     { "lockedzag",          ipLockedZag },
-    { "2dlattice",          ip2DLattice  }
+    { "2dlattice",          ip2DLattice  },
+    { "bcct",               ipBCCT       }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(InfillPattern)
 
@@ -3126,6 +3127,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("crosszag");
     def->enum_values.push_back("lockedzag");
     def->enum_values.push_back("2dlattice");
+    def->enum_values.push_back("bcct");
     def->enum_labels.push_back(L("Concentric"));
     def->enum_labels.push_back(L("Rectilinear"));
     def->enum_labels.push_back(L("Grid"));
@@ -3148,6 +3150,7 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Cross Zag"));
     def->enum_labels.push_back(L("Locked Zag"));
     def->enum_labels.push_back(L("2D Lattice"));
+    def->enum_labels.push_back(L("BCCT Experimental"));
     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipCubic));
 
     def                = this->add("locked_skin_infill_pattern", coEnum);

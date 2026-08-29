@@ -87,7 +87,7 @@ enum AuthorizationType {
 enum InfillPattern : int {
     ipConcentric, ipRectilinear, ipGrid, ipLine, ipCubic, ipTriangles, ipStars, ipGyroid, ipHoneycomb, ipAdaptiveCubic, ipMonotonic, ipMonotonicLine, ipAlignedRectilinear, ip3DHoneycomb,
     ipHilbertCurve, ipArchimedeanChords, ipOctagramSpiral, ipSupportCubic, ipSupportBase, ipConcentricInternal,
-    ipLightning, ipCrossHatch, ipZigZag, ipCrossZag,ipFloatingConcentric, ipLockedZag, ip2DLattice,
+    ipLightning, ipCrossHatch, ipZigZag, ipCrossZag,ipFloatingConcentric, ipLockedZag, ip2DLattice, ipBCCT,
     ipCount,
 };
 

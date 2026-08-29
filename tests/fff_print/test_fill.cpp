@@ -1,10 +1,12 @@
 #include <catch2/catch.hpp>
 
+#include <cmath>
 #include <numeric>
 #include <sstream>
 
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/Fill/Fill.hpp"
+#include "libslic3r/Fill/FillBCCT.hpp"
 #include "libslic3r/Flow.hpp"
 #include "libslic3r/Geometry.hpp"
 #include "libslic3r/Print.hpp"
@@ -16,6 +18,66 @@
 using namespace Slic3r;
 
 bool test_if_solid_surface_filled(const ExPolygon& expolygon, double flow_spacing, double angle = 0, double density = 1.0);
+
+TEST_CASE("Fill: BCCT paper transform and density mapping", "[Fill][BCCT]") {
+    const Vec3d transformed = FillBCCT::shear(Vec3d(2., 3., 4.));
+    REQUIRE(transformed.x() == Approx(2.));
+    REQUIRE(transformed.y() == Approx(6.));
+    REQUIRE(transformed.z() == Approx(4.));
+
+    const auto basis = FillBCCT::lattice_basis(2.);
+    REQUIRE(basis[0].x() == Approx(2.));
+    REQUIRE(basis[0].y() == Approx(1.));
+    REQUIRE(basis[0].z() == Approx(0.));
+    REQUIRE(basis[1].x() == Approx(0.));
+    REQUIRE(basis[1].y() == Approx(1.));
+    REQUIRE(basis[1].z() == Approx(2.));
+    REQUIRE(basis[2].x() == Approx(0.));
+    REQUIRE(basis[2].y() == Approx(2.));
+    REQUIRE(basis[2].z() == Approx(0.));
+
+    const double expected_edge_length =
+        2. * std::sqrt(1.5) + 2. * std::sqrt(3.) + std::sqrt(2.);
+    REQUIRE(FillBCCT::sheared_edge_length_per_cell() == Approx(expected_edge_length));
+    REQUIRE(FillBCCT::cell_size_for_density(0.25, 0.1) ==
+            Approx(std::sqrt(0.1 * expected_edge_length / 0.25)));
+    REQUIRE(FillBCCT::cell_size_for_density(0., 0.1) == Approx(0.));
+}
+
+TEST_CASE("Fill: BCCT produces clipped layer paths", "[Fill][BCCT]") {
+    std::unique_ptr<Slic3r::Fill> filler(Slic3r::Fill::new_from_type("bcct"));
+    REQUIRE(filler != nullptr);
+
+    FillParams params;
+    params.density = 0.2f;
+    params.flow = Flow(0.45f, 0.2f, 0.5f);
+    params.layer_height = 0.2f;
+    params.dont_adjust = true;
+    filler->spacing = params.flow.spacing();
+    filler->angle = 0.f;
+    filler->z = 0.2f;
+
+    Points outer {
+        Point::new_scale(-10., -10.), Point::new_scale(10., -10.),
+        Point::new_scale(10., 10.), Point::new_scale(-10., 10.)
+    };
+    Points hole {
+        Point::new_scale(-2., -2.), Point::new_scale(-2., 2.),
+        Point::new_scale(2., 2.), Point::new_scale(2., -2.)
+    };
+    ExPolygon expolygon(outer, hole);
+    Surface surface(stInternal, expolygon);
+
+    Polylines layer_one = filler->fill_surface(&surface, params);
+    REQUIRE_FALSE(layer_one.empty());
+    REQUIRE(diff_pl(layer_one, offset(expolygon, float(SCALED_EPSILON * 10))).empty());
+
+    filler->z = 0.4f;
+    Polylines layer_two = filler->fill_surface(&surface, params);
+    REQUIRE_FALSE(layer_two.empty());
+    REQUIRE(diff_pl(layer_two, offset(expolygon, float(SCALED_EPSILON * 10))).empty());
+    REQUIRE(layer_one != layer_two);
+}
 
 #if 0
 TEST_CASE("Fill: adjusted solid distance") {
