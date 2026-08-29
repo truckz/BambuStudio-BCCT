@@ -1,0 +1,572 @@
+From f6591be48a46cdef6db62a3de0fd3715d0dd7fe0 Mon Sep 17 00:00:00 2001
+From: Trevor Lillico <trevor@Trevors-MacBook-Pro.local>
+Date: Fri, 28 Aug 2026 22:25:22 -0600
+Subject: [PATCH 1/2] feat: add experimental BCCT sparse infill
+
+---
+ src/libslic3r/CMakeLists.txt    |   2 +
+ src/libslic3r/Fill/Fill.cpp     |   1 +
+ src/libslic3r/Fill/FillBCCT.cpp | 308 ++++++++++++++++++++++++++++++++
+ src/libslic3r/Fill/FillBCCT.hpp |  46 +++++
+ src/libslic3r/Fill/FillBase.cpp |   2 +
+ src/libslic3r/Layer.cpp         |   1 +
+ src/libslic3r/PrintConfig.cpp   |   5 +-
+ src/libslic3r/PrintConfig.hpp   |   2 +-
+ tests/fff_print/test_fill.cpp   |  62 +++++++
+ 9 files changed, 427 insertions(+), 2 deletions(-)
+ create mode 100644 src/libslic3r/Fill/FillBCCT.cpp
+ create mode 100644 src/libslic3r/Fill/FillBCCT.hpp
+
+diff --git a/src/libslic3r/CMakeLists.txt b/src/libslic3r/CMakeLists.txt
+index a432007fd..2fe866ee6 100644
+--- a/src/libslic3r/CMakeLists.txt
++++ b/src/libslic3r/CMakeLists.txt
+@@ -101,6 +101,8 @@ set(lisbslic3r_sources
+     Fill/Fill.hpp
+     Fill/Fill3DHoneycomb.cpp
+     Fill/Fill3DHoneycomb.hpp
++    Fill/FillBCCT.cpp
++    Fill/FillBCCT.hpp
+     Fill/FillAdaptive.cpp
+     Fill/FillAdaptive.hpp
+     Fill/FillBase.cpp
+diff --git a/src/libslic3r/Fill/Fill.cpp b/src/libslic3r/Fill/Fill.cpp
+index 1f04f8d95..4ad15d8b5 100644
+--- a/src/libslic3r/Fill/Fill.cpp
++++ b/src/libslic3r/Fill/Fill.cpp
+@@ -818,6 +818,7 @@ Polylines Layer::generate_sparse_infill_polylines_for_anchoring(FillAdaptive::Oc
+         case ipZigZag:
+         case ipCrossZag:
+         case ip2DLattice:
++		case ipBCCT:
+ 		case ipLockedZag: break;
+         }
+ 
+diff --git a/src/libslic3r/Fill/FillBCCT.cpp b/src/libslic3r/Fill/FillBCCT.cpp
+new file mode 100644
+index 000000000..47e3ad89f
+--- /dev/null
++++ b/src/libslic3r/Fill/FillBCCT.cpp
+@@ -0,0 +1,308 @@
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <set>
++#include <vector>
++
++#include "../ClipperUtils.hpp"
++#include "../Surface.hpp"
++
++#include "FillBCCT.hpp"
++
++namespace Slic3r {
++
++namespace {
++
++struct Segment3D
++{
++    Vec3d a;
++    Vec3d b;
++};
++
++// Clip a segment against an axis-aligned box with the slab method.
++bool clip_segment_to_box(
++    const Vec3d &a,
++    const Vec3d &b,
++    const Vec3d &box_min,
++    const Vec3d &box_max,
++    Segment3D &clipped)
++{
++    constexpr double epsilon = 1e-10;
++    const Vec3d delta = b - a;
++    double t_min = 0.;
++    double t_max = 1.;
++
++    for (int axis = 0; axis < 3; ++ axis) {
++        if (std::abs(delta(axis)) < epsilon) {
++            if (a(axis) < box_min(axis) - epsilon || a(axis) > box_max(axis) + epsilon)
++                return false;
++            continue;
++        }
++
++        double t0 = (box_min(axis) - a(axis)) / delta(axis);
++        double t1 = (box_max(axis) - a(axis)) / delta(axis);
++        if (t0 > t1)
++            std::swap(t0, t1);
++        t_min = std::max(t_min, t0);
++        t_max = std::min(t_max, t1);
++        if (t_min > t_max + epsilon)
++            return false;
++    }
++
++    clipped.a = a + t_min * delta;
++    clipped.b = a + t_max * delta;
++    return (clipped.b - clipped.a).squaredNorm() > epsilon * epsilon;
++}
++
++bool clip_segment_to_z(
++    const Vec3d &a,
++    const Vec3d &b,
++    double z_min,
++    double z_max,
++    Segment3D &clipped)
++{
++    constexpr double epsilon = 1e-10;
++    const double dz = b.z() - a.z();
++    double t_min = 0.;
++    double t_max = 1.;
++
++    if (std::abs(dz) < epsilon) {
++        if (a.z() < z_min - epsilon || a.z() > z_max + epsilon)
++            return false;
++    } else {
++        double t0 = (z_min - a.z()) / dz;
++        double t1 = (z_max - a.z()) / dz;
++        if (t0 > t1)
++            std::swap(t0, t1);
++        t_min = std::max(t_min, t0);
++        t_max = std::min(t_max, t1);
++        if (t_min > t_max + epsilon)
++            return false;
++    }
++
++    const Vec3d delta = b - a;
++    clipped.a = a + t_min * delta;
++    clipped.b = a + t_max * delta;
++    return (clipped.b - clipped.a).squaredNorm() > epsilon * epsilon;
++}
++
++// Build the BCC graph in the paper's transformed coordinates, then crop the
++// selected MG1. The graph itself is the standard BCC inference: every body
++// center is joined to its eight surrounding corners.
++std::vector<Segment3D> make_mg1(double d)
++{
++    const std::array<Vec3d, 3> basis = FillBCCT::lattice_basis(d);
++    const Vec3d box_min(0., d, 0.);
++    const Vec3d box_max(d, 2. * d, d);
++    const Vec3d local_origin(0., d, 0.);
++
++    std::vector<Segment3D> source_edges;
++    source_edges.reserve(32);
++
++    // r1, r2, r3 are the transformed x, z, y translations respectively.
++    // These bounds cover every BCC cell that can intersect the MG1 crop.
++    for (int ix = -3; ix <= 3; ++ ix)
++        for (int iy = -3; iy <= 3; ++ iy)
++            for (int iz = -3; iz <= 3; ++ iz) {
++                const Vec3d cell_origin =
++                    static_cast<double>(ix) * basis[0] +
++                    static_cast<double>(iz) * basis[1] +
++                    static_cast<double>(iy) * basis[2];
++                const Vec3d center = cell_origin + 0.5 * (basis[0] + basis[1] + basis[2]);
++
++                for (int sx = 0; sx <= 1; ++ sx)
++                    for (int sy = 0; sy <= 1; ++ sy)
++                        for (int sz = 0; sz <= 1; ++ sz) {
++                            const Vec3d corner =
++                                cell_origin +
++                                static_cast<double>(sx) * basis[0] +
++                                static_cast<double>(sz) * basis[1] +
++                                static_cast<double>(sy) * basis[2];
++                            Segment3D clipped;
++                            if (clip_segment_to_box(center, corner, box_min, box_max, clipped)) {
++                                clipped.a -= local_origin;
++                                clipped.b -= local_origin;
++                                source_edges.push_back(std::move(clipped));
++                            }
++                        }
++            }
++
++    // The paper specifies the three reflection planes but not their global
++    // phase. We use each MG1's upper face (local coordinate d) as the FDM
++    // reflection plane; copies then form a 2d-periodic supercell.
++    // Canonicalize the reflected edges on the 2d-periodic domain. Some
++    // members lie in a twin plane and would otherwise be emitted twice by
++    // the adjacent reflected meta-grains.
++    const double half_cell = 0.5 * d;
++    constexpr int period_steps = 4;
++    std::set<std::array<int, 6>> periodic_edges;
++    for (int mask = 0; mask < 8; ++ mask)
++        for (const Segment3D &source : source_edges) {
++            Segment3D reflected = source;
++            for (int axis = 0; axis < 3; ++ axis)
++                if ((mask & (1 << axis)) != 0) {
++                    reflected.a(axis) = 2. * d - reflected.a(axis);
++                    reflected.b(axis) = 2. * d - reflected.b(axis);
++                }
++
++            std::array<int, 3> a;
++            std::array<int, 3> b;
++            for (int axis = 0; axis < 3; ++ axis) {
++                a[axis] = int(std::llround(reflected.a(axis) / half_cell));
++                b[axis] = int(std::llround(reflected.b(axis) / half_cell));
++            }
++
++            std::array<int, 6> forward;
++            std::array<int, 6> reverse;
++            for (int axis = 0; axis < 3; ++ axis) {
++                const int delta = b[axis] - a[axis];
++                forward[axis]     = (a[axis] % period_steps + period_steps) % period_steps;
++                forward[axis + 3] = delta;
++                reverse[axis]     = (b[axis] % period_steps + period_steps) % period_steps;
++                reverse[axis + 3] = -delta;
++            }
++            periodic_edges.insert(std::min(forward, reverse));
++        }
++
++    std::vector<Segment3D> meta_grain;
++    meta_grain.reserve(periodic_edges.size());
++    for (const std::array<int, 6> &edge : periodic_edges) {
++        Segment3D segment;
++        for (int axis = 0; axis < 3; ++ axis) {
++            segment.a(axis) = half_cell * edge[axis];
++            segment.b(axis) = segment.a(axis) + half_cell * edge[axis + 3];
++        }
++        meta_grain.push_back(std::move(segment));
++    }
++    return meta_grain;
++}
++
++} // namespace
++
++Vec3d FillBCCT::shear(const Vec3d &point)
++{
++    return Vec3d(point.x(), 0.5 * point.x() + point.y() + 0.5 * point.z(), point.z());
++}
++
++std::array<Vec3d, 3> FillBCCT::lattice_basis(double cell_size)
++{
++    // M*[d,0,0], M*[0,0,d], M*[0,d,0] = r1, r2, r3 in the paper.
++    return {
++        shear(Vec3d(cell_size, 0., 0.)),
++        shear(Vec3d(0., 0., cell_size)),
++        shear(Vec3d(0., cell_size, 0.))
++    };
++}
++
++double FillBCCT::sheared_edge_length_per_cell()
++{
++    const std::array<Vec3d, 3> basis = lattice_basis(1.);
++    double total_length = 0.;
++    for (int sx = -1; sx <= 1; sx += 2)
++        for (int sy = -1; sy <= 1; sy += 2)
++            for (int sz = -1; sz <= 1; sz += 2) {
++                const Vec3d edge =
++                    static_cast<double>(sx) * 0.5 * basis[0] +
++                    static_cast<double>(sz) * 0.5 * basis[1] +
++                    static_cast<double>(sy) * 0.5 * basis[2];
++                total_length += edge.norm();
++            }
++    return total_length;
++}
++
++double FillBCCT::cell_size_for_density(double density, double cross_section)
++{
++    if (density <= 0. || cross_section <= 0.)
++        return 0.;
++    return std::sqrt(cross_section * sheared_edge_length_per_cell() / density);
++}
++
++void FillBCCT::_fill_surface_single(
++    const FillParams                &params,
++    unsigned int                     thickness_layers,
++    const std::pair<float, Point>   & /* direction */,
++    ExPolygon                        expolygon,
++    Polylines                       &polylines_out)
++{
++    if (params.density <= 0.f || params.flow.width() <= 0.f)
++        return;
++
++    const double flow_area = params.flow.mm3_per_mm();
++    if (flow_area <= 0.)
++        return;
++
++    const double layer_height = params.layer_height > 0.f ? params.layer_height : params.flow.height();
++    if (layer_height <= 0.)
++        return;
++
++    double d = cell_size_for_density(params.density, flow_area);
++    if (d <= 0.)
++        return;
++
++    // The BCC center-to-corner edges change Z by d/2. Round d upward so that
++    // this half-cell height is an integer number of layers. This preserves the
++    // layer-to-layer phase while making the requested density a first-order
++    // target rather than an exact volume guarantee.
++    d = 2. * layer_height * std::ceil(d / (2. * layer_height));
++    d = std::max(d, 2. * layer_height);
++    const double period = 2. * d;
++    const double half_width = 0.5 * params.flow.width();
++    const double layer_span = layer_height * std::max(1u, thickness_layers);
++    const double z_min = this->z - layer_span - half_width;
++    const double z_max = this->z + half_width;
++
++    float infill_angle = std::isfinite(this->angle) ? this->angle : 0.f;
++    const size_t output_start = polylines_out.size();
++    if (std::abs(infill_angle) >= EPSILON)
++        expolygon.rotate(-infill_angle);
++
++    const BoundingBox bb = expolygon.contour.bounding_box();
++    const double min_x = unscale<double>(bb.min.x());
++    const double min_y = unscale<double>(bb.min.y());
++    const double max_x = unscale<double>(bb.max.x());
++    const double max_y = unscale<double>(bb.max.y());
++
++    const int tile_x_min = static_cast<int>(std::floor(min_x / period)) - 1;
++    const int tile_y_min = static_cast<int>(std::floor(min_y / period)) - 1;
++    const int tile_z_min = static_cast<int>(std::floor(z_min / period)) - 1;
++    const int tile_x_max = static_cast<int>(std::ceil(max_x / period)) + 1;
++    const int tile_y_max = static_cast<int>(std::ceil(max_y / period)) + 1;
++    const int tile_z_max = static_cast<int>(std::ceil(z_max / period)) + 1;
++
++    const std::vector<Segment3D> meta_grain = make_mg1(d);
++    Polylines layer_lines;
++    layer_lines.reserve(meta_grain.size() * size_t(tile_x_max - tile_x_min + 1));
++
++    for (int tx = tile_x_min; tx <= tile_x_max; ++ tx)
++        for (int ty = tile_y_min; ty <= tile_y_max; ++ ty)
++            for (int tz = tile_z_min; tz <= tile_z_max; ++ tz) {
++                const Vec3d tile_offset(period * tx, period * ty, period * tz);
++                for (const Segment3D &meta_segment : meta_grain) {
++                    const Vec3d a = meta_segment.a + tile_offset;
++                    const Vec3d b = meta_segment.b + tile_offset;
++                    Segment3D layer_segment;
++                    if (!clip_segment_to_z(a, b, z_min, z_max, layer_segment))
++                        continue;
++
++                    Polyline line;
++                    line.points.emplace_back(Point::new_scale(layer_segment.a.x(), layer_segment.a.y()));
++                    line.points.emplace_back(Point::new_scale(layer_segment.b.x(), layer_segment.b.y()));
++                    if (line.points.front() != line.points.back())
++                        layer_lines.push_back(std::move(line));
++                }
++            }
++
++    // Clip each layer's projected strut portions with the normal infill
++    // boundary. No connection operation is applied: the 3D graph, rather
++    // than an XY linking heuristic, supplies the topology.
++    layer_lines = intersection_pl(std::move(layer_lines), expolygon);
++    for (Polyline &line : layer_lines)
++        if (line.points.size() >= 2 && line.length() > SCALED_EPSILON)
++            polylines_out.push_back(std::move(line));
++
++    if (std::abs(infill_angle) >= EPSILON)
++        for (auto it = polylines_out.begin() + output_start; it != polylines_out.end(); ++ it)
++            it->rotate(infill_angle);
++}
++
++} // namespace Slic3r
+diff --git a/src/libslic3r/Fill/FillBCCT.hpp b/src/libslic3r/Fill/FillBCCT.hpp
+new file mode 100644
+index 000000000..282f7186b
+--- /dev/null
++++ b/src/libslic3r/Fill/FillBCCT.hpp
+@@ -0,0 +1,46 @@
++#ifndef slic3r_FillBCCT_hpp_
++#define slic3r_FillBCCT_hpp_
++
++#include <array>
++
++#include "../Point.hpp"
++
++#include "FillBase.hpp"
++
++namespace Slic3r {
++
++class FillBCCT : public Fill
++{
++public:
++    Fill* clone() const override { return new FillBCCT(*this); }
++
++    bool use_bridge_flow() const override { return false; }
++    bool is_self_crossing() override { return true; }
++
++    // BCCT's exact shear from the paper: x2 = x1,
++    // y2 = 0.5*x1 + y1 + 0.5*z1, z2 = z1.
++    static Vec3d shear(const Vec3d &point);
++
++    // The sheared BCC translations, in the paper's r1, r2, r3 order.
++    static std::array<Vec3d, 3> lattice_basis(double cell_size);
++
++    // Sum of the eight sheared center-to-corner edge lengths for one
++    // conventional BCC cell of unit side length.
++    static double sheared_edge_length_per_cell();
++
++    // First-order FDM density mapping. The cross section is the extrusion
++    // flow area in mm^2 and density is the requested sparse-fill fraction.
++    static double cell_size_for_density(double density, double cross_section);
++
++protected:
++    void _fill_surface_single(
++        const FillParams                &params,
++        unsigned int                     thickness_layers,
++        const std::pair<float, Point>   &direction,
++        ExPolygon                        expolygon,
++        Polylines                       &polylines_out) override;
++};
++
++} // namespace Slic3r
++
++#endif // slic3r_FillBCCT_hpp_
+diff --git a/src/libslic3r/Fill/FillBase.cpp b/src/libslic3r/Fill/FillBase.cpp
+index 327e00169..8996ec4b6 100644
+--- a/src/libslic3r/Fill/FillBase.cpp
++++ b/src/libslic3r/Fill/FillBase.cpp
+@@ -15,6 +15,7 @@
+ #include "FillConcentric.hpp"
+ #include "FillHoneycomb.hpp"
+ #include "Fill3DHoneycomb.hpp"
++#include "FillBCCT.hpp"
+ #include "FillGyroid.hpp"
+ #include "FillPlanePath.hpp"
+ #include "FillLine.hpp"
+@@ -62,6 +63,7 @@ Fill* Fill::new_from_type(const InfillPattern type)
+     case ipFloatingConcentric:  return new FillFloatingConcentric();
+     case ipLockedZag:           return new FillLockedZag();
+     case ip2DLattice:           return new Fill2DLattice();
++    case ipBCCT:                return new FillBCCT();
+     default: throw Slic3r::InvalidArgument("unknown type");
+     }
+ }
+diff --git a/src/libslic3r/Layer.cpp b/src/libslic3r/Layer.cpp
+index f519e137d..cdf3ce1a1 100644
+--- a/src/libslic3r/Layer.cpp
++++ b/src/libslic3r/Layer.cpp
+@@ -603,6 +603,7 @@ coordf_t Layer::get_sparse_infill_max_void_area()
+             case ip3DHoneycomb:
+             case ipArchimedeanChords:
+             case ip2DLattice: //this function seems to have been abandoned, there's no anywhere called this
++            case ipBCCT:
+                 max_void_area = std::max(max_void_area, spacing * spacing);
+                 break;
+             case ipGrid:
+diff --git a/src/libslic3r/PrintConfig.cpp b/src/libslic3r/PrintConfig.cpp
+index 7d8ab09dd..1dead2016 100644
+--- a/src/libslic3r/PrintConfig.cpp
++++ b/src/libslic3r/PrintConfig.cpp
+@@ -240,7 +240,8 @@ static t_config_enum_values s_keys_map_InfillPattern {
+     { "zigzag",             ipZigZag },
+     { "crosszag",           ipCrossZag },
+     { "lockedzag",          ipLockedZag },
+-    { "2dlattice",          ip2DLattice  }
++    { "2dlattice",          ip2DLattice  },
++    { "bcct",               ipBCCT       }
+ };
+ CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(InfillPattern)
+ 
+@@ -3126,6 +3127,7 @@ void PrintConfigDef::init_fff_params()
+     def->enum_values.push_back("crosszag");
+     def->enum_values.push_back("lockedzag");
+     def->enum_values.push_back("2dlattice");
++    def->enum_values.push_back("bcct");
+     def->enum_labels.push_back(L("Concentric"));
+     def->enum_labels.push_back(L("Rectilinear"));
+     def->enum_labels.push_back(L("Grid"));
+@@ -3148,6 +3150,7 @@ void PrintConfigDef::init_fff_params()
+     def->enum_labels.push_back(L("Cross Zag"));
+     def->enum_labels.push_back(L("Locked Zag"));
+     def->enum_labels.push_back(L("2D Lattice"));
++    def->enum_labels.push_back(L("BCCT Experimental"));
+     def->set_default_value(new ConfigOptionEnum<InfillPattern>(ipCubic));
+ 
+     def                = this->add("locked_skin_infill_pattern", coEnum);
+diff --git a/src/libslic3r/PrintConfig.hpp b/src/libslic3r/PrintConfig.hpp
+index 0f1319c8e..d3f2cb506 100644
+--- a/src/libslic3r/PrintConfig.hpp
++++ b/src/libslic3r/PrintConfig.hpp
+@@ -87,7 +87,7 @@ enum AuthorizationType {
+ enum InfillPattern : int {
+     ipConcentric, ipRectilinear, ipGrid, ipLine, ipCubic, ipTriangles, ipStars, ipGyroid, ipHoneycomb, ipAdaptiveCubic, ipMonotonic, ipMonotonicLine, ipAlignedRectilinear, ip3DHoneycomb,
+     ipHilbertCurve, ipArchimedeanChords, ipOctagramSpiral, ipSupportCubic, ipSupportBase, ipConcentricInternal,
+-    ipLightning, ipCrossHatch, ipZigZag, ipCrossZag,ipFloatingConcentric, ipLockedZag, ip2DLattice,
++    ipLightning, ipCrossHatch, ipZigZag, ipCrossZag,ipFloatingConcentric, ipLockedZag, ip2DLattice, ipBCCT,
+     ipCount,
+ };
+ 
+diff --git a/tests/fff_print/test_fill.cpp b/tests/fff_print/test_fill.cpp
+index 8e311282e..d60e97b20 100644
+--- a/tests/fff_print/test_fill.cpp
++++ b/tests/fff_print/test_fill.cpp
+@@ -1,10 +1,12 @@
+ #include <catch2/catch.hpp>
+ 
++#include <cmath>
+ #include <numeric>
+ #include <sstream>
+ 
+ #include "libslic3r/ClipperUtils.hpp"
+ #include "libslic3r/Fill/Fill.hpp"
++#include "libslic3r/Fill/FillBCCT.hpp"
+ #include "libslic3r/Flow.hpp"
+ #include "libslic3r/Geometry.hpp"
+ #include "libslic3r/Print.hpp"
+@@ -17,6 +19,66 @@ using namespace Slic3r;
+ 
+ bool test_if_solid_surface_filled(const ExPolygon& expolygon, double flow_spacing, double angle = 0, double density = 1.0);
+ 
++TEST_CASE("Fill: BCCT paper transform and density mapping", "[Fill][BCCT]") {
++    const Vec3d transformed = FillBCCT::shear(Vec3d(2., 3., 4.));
++    REQUIRE(transformed.x() == Approx(2.));
++    REQUIRE(transformed.y() == Approx(6.));
++    REQUIRE(transformed.z() == Approx(4.));
++
++    const auto basis = FillBCCT::lattice_basis(2.);
++    REQUIRE(basis[0].x() == Approx(2.));
++    REQUIRE(basis[0].y() == Approx(1.));
++    REQUIRE(basis[0].z() == Approx(0.));
++    REQUIRE(basis[1].x() == Approx(0.));
++    REQUIRE(basis[1].y() == Approx(1.));
++    REQUIRE(basis[1].z() == Approx(2.));
++    REQUIRE(basis[2].x() == Approx(0.));
++    REQUIRE(basis[2].y() == Approx(2.));
++    REQUIRE(basis[2].z() == Approx(0.));
++
++    const double expected_edge_length =
++        2. * std::sqrt(1.5) + 2. * std::sqrt(3.) + std::sqrt(2.);
++    REQUIRE(FillBCCT::sheared_edge_length_per_cell() == Approx(expected_edge_length));
++    REQUIRE(FillBCCT::cell_size_for_density(0.25, 0.1) ==
++            Approx(std::sqrt(0.1 * expected_edge_length / 0.25)));
++    REQUIRE(FillBCCT::cell_size_for_density(0., 0.1) == Approx(0.));
++}
++
++TEST_CASE("Fill: BCCT produces clipped layer paths", "[Fill][BCCT]") {
++    std::unique_ptr<Slic3r::Fill> filler(Slic3r::Fill::new_from_type("bcct"));
++    REQUIRE(filler != nullptr);
++
++    FillParams params;
++    params.density = 0.2f;
++    params.flow = Flow(0.45f, 0.2f, 0.5f);
++    params.layer_height = 0.2f;
++    params.dont_adjust = true;
++    filler->spacing = params.flow.spacing();
++    filler->angle = 0.f;
++    filler->z = 0.2f;
++
++    Points outer {
++        Point::new_scale(-10., -10.), Point::new_scale(10., -10.),
++        Point::new_scale(10., 10.), Point::new_scale(-10., 10.)
++    };
++    Points hole {
++        Point::new_scale(-2., -2.), Point::new_scale(-2., 2.),
++        Point::new_scale(2., 2.), Point::new_scale(2., -2.)
++    };
++    ExPolygon expolygon(outer, hole);
++    Surface surface(stInternal, expolygon);
++
++    Polylines layer_one = filler->fill_surface(&surface, params);
++    REQUIRE_FALSE(layer_one.empty());
++    REQUIRE(diff_pl(layer_one, offset(expolygon, float(SCALED_EPSILON * 10))).empty());
++
++    filler->z = 0.4f;
++    Polylines layer_two = filler->fill_surface(&surface, params);
++    REQUIRE_FALSE(layer_two.empty());
++    REQUIRE(diff_pl(layer_two, offset(expolygon, float(SCALED_EPSILON * 10))).empty());
++    REQUIRE(layer_one != layer_two);
++}
++
+ #if 0
+ TEST_CASE("Fill: adjusted solid distance") {
+     int surface_width = 250;
+-- 
+2.50.1 (Apple Git-155)
+

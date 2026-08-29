@@ -1,0 +1,53 @@
+From 06ba25e0cdc76905a8dbd67aeda5f2dd5c2298fd Mon Sep 17 00:00:00 2001
+From: Trevor Lillico <trevor@Trevors-MacBook-Pro.local>
+Date: Fri, 28 Aug 2026 22:25:22 -0600
+Subject: [PATCH 2/2] fix: dispatch job errors on the UI thread
+
+---
+ src/slic3r/GUI/Jobs/Job.cpp | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/src/slic3r/GUI/Jobs/Job.cpp b/src/slic3r/GUI/Jobs/Job.cpp
+index b188da03b..7eae1ea7f 100644
+--- a/src/slic3r/GUI/Jobs/Job.cpp
++++ b/src/slic3r/GUI/Jobs/Job.cpp
+@@ -1,9 +1,11 @@
+ #include <algorithm>
+ #include <exception>
++#include <utility>
+ 
+ #include "Job.hpp"
+ #include <libslic3r/Thread.hpp>
+ #include <boost/log/trivial.hpp>
++#include <wx/app.h>
+ 
+ namespace Slic3r {
+ 
+@@ -37,7 +39,18 @@ void GUI::Job::update_percent_finish()
+ 
+ void GUI::Job::show_error_info(wxString msg, int code, wxString description, wxString extra)
+ {
+-    m_progress->show_error_info(msg, code, description, extra);
++    // process() runs on the job's worker thread, while every ProgressIndicator
++    // implementation updates wxWidgets controls. AppKit traps if those controls
++    // are touched off the main thread.
++    const std::shared_ptr<ProgressIndicator> progress = m_progress;
++    wxTheApp->CallAfter([
++        progress,
++        msg = std::move(msg),
++        code,
++        description = std::move(description),
++        extra = std::move(extra)]() {
++        progress->show_error_info(msg, code, description, extra);
++    });
+ }
+ 
+ GUI::Job::Job(std::shared_ptr<ProgressIndicator> pri)
+@@ -163,4 +176,3 @@ bool GUI::ExclusiveJobGroup::is_any_running() const
+ }
+ 
+ }
+-
+-- 
+2.50.1 (Apple Git-155)
+
