@@ -15615,11 +15615,16 @@ void Plater::priv::on_action_publish(wxCommandEvent &event)
     }
 }
 
-void Plater::priv::on_action_print_plate(SimpleEvent&)
+void Plater::priv::on_action_print_plate(SimpleEvent& event)
 {
     if (q != nullptr) {
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ":received print plate event\n" ;
     }
+
+#ifdef __APPLE__
+    on_action_send_to_multi_app(event);
+    return;
+#endif
 
     if (!wxGetApp().check_send_print_version_policy()) return;
 
@@ -15681,7 +15686,33 @@ void Plater::priv::on_action_send_to_multi_app(SimpleEvent &)
 #endif //WIN32
 
 #ifdef __APPLE__
-    //todo
+    auto gcode_result = q->send_gcode(partplate_list.get_curr_plate_index(),
+        [this](int export_stage, int current, int total, bool &cancel) {});
+
+    if (gcode_result != 0) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": send_gcode failed\n";
+        GUI::MessageDialog msgdialog(nullptr, _L("Failed to export the sliced file for Bambu Connect."), "", wxAPPLY | wxOK);
+        msgdialog.ShowModal();
+        return;
+    }
+
+    PrintPrepareData data;
+    q->get_print_job_data(&data);
+    if (data._3mf_path.empty()) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ": 3mf path is empty\n";
+        GUI::MessageDialog msgdialog(nullptr, _L("The sliced file path for Bambu Connect is empty."), "", wxAPPLY | wxOK);
+        msgdialog.ShowModal();
+        return;
+    }
+
+    const wxString filename = q->get_export_gcode_filename("", true, false);
+    const std::string url = "bambu-connect://import-file?path=" + Http::url_encode(data._3mf_path.string())
+        + "&name=" + Http::url_encode(filename.utf8_string()) + "&version=1.0.0";
+
+    if (!wxLaunchDefaultBrowser(wxString::FromUTF8(url))) {
+        GUI::MessageDialog msgdialog(nullptr, _L("Failed to start Bambu Connect."), "", wxAPPLY | wxOK);
+        msgdialog.ShowModal();
+    }
 #endif //__APPLE__
 
 }

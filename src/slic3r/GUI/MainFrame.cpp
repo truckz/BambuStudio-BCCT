@@ -82,6 +82,15 @@
 namespace Slic3r {
 namespace GUI {
 
+static wxString print_plate_button_label()
+{
+#ifdef __APPLE__
+    return _L("Send with Bambu Connect");
+#else
+    return _L("Print plate");
+#endif
+}
+
 wxDEFINE_EVENT(EVT_SELECT_TAB, wxCommandEvent);
 wxDEFINE_EVENT(EVT_HTTP_ERROR, wxCommandEvent);
 wxDEFINE_EVENT(EVT_USER_LOGIN, wxCommandEvent);
@@ -1995,7 +2004,7 @@ wxBoxSizer* MainFrame::create_side_tools()
 
     m_slice_btn = new SideButton(slice_panel, _L("Slice plate"), "");
     m_slice_option_btn = new SideButton(slice_panel, "", "sidebutton_dropdown", 0, FromDIP(14));
-    m_print_btn = new SideButton(print_panel, _L("Print plate"), "");
+    m_print_btn = new SideButton(print_panel, print_plate_button_label(), "");
     m_print_option_btn = new SideButton(print_panel, "", "sidebutton_dropdown", 0, FromDIP(14));
 
     auto slice_sizer = new wxBoxSizer(wxHORIZONTAL);
@@ -2280,7 +2289,7 @@ wxBoxSizer* MainFrame::create_side_tools()
             }
             else {
                 //Bambu Studio Buttons
-                SideButton* print_plate_btn = new SideButton(p, _L("Print plate"), "");
+                SideButton* print_plate_btn = new SideButton(p, print_plate_button_label(), "");
                 print_plate_btn->SetCornerRadius(0);
 
                 SideButton* send_to_printer_btn = new SideButton(p, _L("Send"), "");
@@ -2293,7 +2302,7 @@ wxBoxSizer* MainFrame::create_side_tools()
                 export_all_sliced_file_btn->SetCornerRadius(0);
 
                 print_plate_btn->Bind(wxEVT_BUTTON, [this, p](wxCommandEvent&) {
-                    m_print_btn->SetLabel(_L("Print plate"));
+                    m_print_btn->SetLabel(print_plate_button_label());
                     m_print_select = ePrintPlate;
                     m_print_enable = get_enable_print_status();
                     m_print_btn->Enable(m_print_enable);
@@ -4330,7 +4339,7 @@ void MainFrame::on_config_changed(DynamicPrintConfig* config) const
 void MainFrame::set_print_button_to_default(PrintSelectType select_type)
 {
     if (select_type == PrintSelectType::ePrintPlate) {
-        m_print_btn->SetLabel(_L("Print plate"));
+        m_print_btn->SetLabel(print_plate_button_label());
         m_print_select = ePrintPlate;
         if (m_print_enable)
             m_print_enable = get_enable_print_status();
