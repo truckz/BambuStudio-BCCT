@@ -1266,8 +1266,11 @@ void PresetUpdater::priv::sync_plugins(std::string http_url, std::string plugin_
             else
                 app_config->set("update_network_plugin", "true");
         }
+        // macOS uses Bambu Connect; optional plug-in updates are available in Help.
+#ifndef __APPLE__
         else
             GUI::wxGetApp().plater()->get_notification_manager()->push_notification(GUI::NotificationType::BBLPluginUpdateAvailable);
+#endif
     }
 }
 
@@ -1910,6 +1913,13 @@ void PresetUpdater::do_printer_config_update()
     } else {
         BOOST_LOG_TRIVIAL(info) << "User refused the update";
     }
+}
+
+bool PresetUpdater::network_plugin_update_available() const
+{
+    std::string version;
+    bool force = false;
+    return p->get_cached_plugins_version(version, force);
 }
 
 bool PresetUpdater::version_check_enabled() const

@@ -44,6 +44,8 @@ This workflow requires Bambu Connect to be installed, signed in to the user's Ba
 
 The handoff does not bypass certificate or signature checks and does not modify Bambu's proprietary network module. Bambu Connect remains responsible for authenticated printer communication.
 
+On macOS, optional network plug-in updates appear under **Help → Network Plug-in Update** instead of a recurring popup. The menu item is enabled when an update is ready; required-update handling is unchanged.
+
 ## BCCT geometry status
 
 Directly reproduced from the paper:

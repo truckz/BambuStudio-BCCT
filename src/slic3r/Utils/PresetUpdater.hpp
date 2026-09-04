@@ -60,6 +60,7 @@ public:
     void do_printer_config_update();
 
 	bool version_check_enabled() const;
+    bool network_plugin_update_available() const;
 
 private:
 	struct priv;

@@ -40,6 +40,7 @@
 #include "Plater.hpp"
 #include "WebViewDialog.hpp"
 #include "../Utils/Process.hpp"
+#include "../Utils/PresetUpdater.hpp"
 #include "format.hpp"
 // BBS
 #include "PartPlate.hpp"
@@ -2825,6 +2826,16 @@ static wxMenu* generate_help_menu()
     append_menu_item(helpMenu, wxID_ANY, _L("Check for Presets Update"), _L("Check for Presets Update"), [](wxCommandEvent &) {
         wxGetApp().check_config_updates_from_menu();
     });
+
+#ifdef __APPLE__
+    append_menu_item(helpMenu, wxID_ANY, _L("Network Plug-in Update"), _L("View and install the available network plug-in update"),
+        [](wxCommandEvent &) {
+            wxQueueEvent(wxGetApp().plater(), new wxCommandEvent(EVT_UPDATE_PLUGINS_WHEN_LAUNCH));
+        }, "", nullptr, []() {
+            auto updater = wxGetApp().get_preset_updater();
+            return wxGetApp().plater() && updater && updater->network_plugin_update_available();
+        });
+#endif
 
      append_menu_item(helpMenu, wxID_ANY, _L("Open Network Test"), _L("Open Network Test"), [](wxCommandEvent&) {
             NetworkTestDialog dlg(wxGetApp().mainframe);
