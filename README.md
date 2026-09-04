@@ -6,11 +6,12 @@ This repository backs up an experimental sparse-infill implementation for Bambu 
 - Advanced Materials (2026)
 - DOI: https://doi.org/10.1002/adma.202516173
 
-The implementation is based on Bambu Studio commit `bdfd004de8e9` (version `02.08.02.61`). It uses Bambu Studio's normal layerwise infill system rather than adding a general-purpose 3D lattice engine.
+The current source build is on the `codex/bcct-infill` branch, based on Bambu Studio commit `66e405477`. It uses Bambu Studio's normal layerwise infill system rather than adding a general-purpose 3D lattice engine.
 
 ## Repository contents
 
-- `patches/`: two Git patches that apply the BCCT implementation and macOS print-error UI fix to the base commit.
+- `codex/bcct-infill`: the active source branch, including BCCT infill, its UI icon, and the macOS Bambu Connect print handoff.
+- `patches/`: an earlier two-patch snapshot of the BCCT implementation and macOS print-error UI fix, retained for reference.
 - `changed-files/`: browsable copies of every source and test file changed by those patches.
 - `output/`: generated 3MF and pre-sliced G-code 3MF test files.
 - `LICENSE`: Bambu Studio's upstream AGPL-3.0 license.
@@ -24,7 +25,15 @@ The `BCCT_42mm_Visual_Cube_With_Base` files are a native 42 × 42 × 42 mm test 
 - Three 0.16 mm bottom layers for a 0.48 mm foundation.
 - Zero side walls and zero top layers.
 
-Open the ordinary `.3mf` with the BCCT-enabled source build to inspect or reslice it. Open the `_OFFICIAL_SEND.gcode.3mf` with an officially signed Bambu Studio release to send the already-sliced job to the printer. The send copy contains the same G-code; only its stored pattern label is changed to avoid rejection by the official build.
+Open the ordinary `.3mf` with the BCCT-enabled source build to inspect or reslice it. The `_OFFICIAL_SEND.gcode.3mf` files are retained as legacy test artifacts; they are no longer required by the current macOS workflow.
+
+## Printing from the macOS development build
+
+The current `codex/bcct-infill` build changes the macOS print action to **Send with Bambu Connect**. After slicing, the development build exports the plate as a `.gcode.3mf` package and hands it directly to the officially signed Bambu Connect application. An officially signed copy of Bambu Studio is no longer needed as an intermediate sender.
+
+This workflow requires Bambu Connect to be installed, signed in to the user's Bambu account, and able to see the target printer. It was tested successfully on Trevor's Mac with Bambu Connect and a Bambu Lab P1S. Other operating systems and printer models have not yet been verified.
+
+The handoff does not bypass certificate or signature checks and does not modify Bambu's proprietary network module. Bambu Connect remains responsible for authenticated printer communication.
 
 ## Geometry status
 
@@ -50,6 +59,6 @@ No claim is made that an FDM print reproduces the paper's reported mechanical im
 
 ## Applying the patches
 
-Check out Bambu Studio at commit `bdfd004de8e9`, then apply the files in `patches/` in numeric order with `git am`.
+For the current implementation, check out the repository's `codex/bcct-infill` branch and build Bambu Studio normally. The older patch snapshot can still be reproduced by checking out Bambu Studio at commit `bdfd004de8e9` and applying the files in `patches/` in numeric order with `git am`.
 
-The source-built application can slice BCCT directly. Bambu's proprietary networking module requires an officially signed Bambu application for printer upload, so pre-sliced `.gcode.3mf` files should be opened and sent using an official signed Bambu Studio release.
+The source-built application can slice BCCT directly. On macOS, use **Send with Bambu Connect** to pass the sliced job to Bambu Connect for printer selection and upload.
