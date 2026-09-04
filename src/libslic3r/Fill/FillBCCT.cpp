@@ -194,7 +194,7 @@ std::array<Vec3d, 3> FillBCCT::lattice_basis(double cell_size)
     };
 }
 
-double FillBCCT::sheared_edge_length_per_cell()
+double FillBCCT::projected_edge_length_per_cell()
 {
     const std::array<Vec3d, 3> basis = lattice_basis(1.);
     double total_length = 0.;
@@ -205,16 +205,20 @@ double FillBCCT::sheared_edge_length_per_cell()
                     static_cast<double>(sx) * 0.5 * basis[0] +
                     static_cast<double>(sz) * 0.5 * basis[1] +
                     static_cast<double>(sy) * 0.5 * basis[2];
-                total_length += edge.norm();
+                total_length += edge.head<2>().norm();
             }
     return total_length;
 }
 
-double FillBCCT::cell_size_for_density(double density, double cross_section)
+double FillBCCT::cell_size_for_density(double density, double cross_section, double width, double layer_span)
 {
-    if (density <= 0. || cross_section <= 0.)
+    if (density <= 0. || cross_section <= 0. || width <= 0. || layer_span <= 0.)
         return 0.;
-    return std::sqrt(cross_section * sheared_edge_length_per_cell() / density);
+    // Each extrusion interval projects a slab of height layer_span + width.
+    // Budget the resulting XY toolpaths, including overlap between slabs,
+    // rather than the lengths of the underlying 3D struts.
+    const double overlap_factor = (layer_span + width) / layer_span;
+    return std::sqrt(cross_section * projected_edge_length_per_cell() * overlap_factor / density);
 }
 
 void FillBCCT::_fill_surface_single(
@@ -235,7 +239,8 @@ void FillBCCT::_fill_surface_single(
     if (layer_height <= 0.)
         return;
 
-    double d = cell_size_for_density(params.density, flow_area);
+    const double layer_span = layer_height * std::max(1u, thickness_layers);
+    double d = cell_size_for_density(params.density, flow_area, params.flow.width(), layer_span);
     if (d <= 0.)
         return;
 
@@ -247,7 +252,6 @@ void FillBCCT::_fill_surface_single(
     d = std::max(d, 2. * layer_height);
     const double period = 2. * d;
     const double half_width = 0.5 * params.flow.width();
-    const double layer_span = layer_height * std::max(1u, thickness_layers);
     const double z_min = this->z - layer_span - half_width;
     const double z_max = this->z + half_width;
 

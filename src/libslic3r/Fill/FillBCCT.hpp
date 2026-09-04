@@ -24,13 +24,14 @@ public:
     // The sheared BCC translations, in the paper's r1, r2, r3 order.
     static std::array<Vec3d, 3> lattice_basis(double cell_size);
 
-    // Sum of the eight sheared center-to-corner edge lengths for one
+    // Sum of the XY-projected sheared center-to-corner edge lengths for one
     // conventional BCC cell of unit side length.
-    static double sheared_edge_length_per_cell();
+    static double projected_edge_length_per_cell();
 
     // First-order FDM density mapping. The cross section is the extrusion
-    // flow area in mm^2 and density is the requested sparse-fill fraction.
-    static double cell_size_for_density(double density, double cross_section);
+    // flow area in mm^2, width is the extrusion width, and layer_span is the
+    // interval between extrusion layers (including combined infill layers).
+    static double cell_size_for_density(double density, double cross_section, double width, double layer_span);
 
 protected:
     void _fill_surface_single(

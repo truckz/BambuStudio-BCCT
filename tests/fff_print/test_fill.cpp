@@ -36,12 +36,13 @@ TEST_CASE("Fill: BCCT paper transform and density mapping", "[Fill][BCCT]") {
     REQUIRE(basis[2].y() == Approx(2.));
     REQUIRE(basis[2].z() == Approx(0.));
 
-    const double expected_edge_length =
-        2. * std::sqrt(1.5) + 2. * std::sqrt(3.) + std::sqrt(2.);
-    REQUIRE(FillBCCT::sheared_edge_length_per_cell() == Approx(expected_edge_length));
-    REQUIRE(FillBCCT::cell_size_for_density(0.25, 0.1) ==
-            Approx(std::sqrt(0.1 * expected_edge_length / 0.25)));
-    REQUIRE(FillBCCT::cell_size_for_density(0., 0.1) == Approx(0.));
+    const double expected_edge_length = 1. + 2. * std::sqrt(2.) + std::sqrt(5.);
+    REQUIRE(FillBCCT::projected_edge_length_per_cell() == Approx(expected_edge_length));
+    REQUIRE(FillBCCT::cell_size_for_density(0.25, 0.1, 0.6, 0.2) ==
+            Approx(std::sqrt(0.1 * expected_edge_length * 4. / 0.25)));
+    REQUIRE(FillBCCT::cell_size_for_density(0., 0.1, 0.6, 0.2) == Approx(0.));
+    REQUIRE(FillBCCT::cell_size_for_density(0.25, 0.1, 0., 0.2) == Approx(0.));
+    REQUIRE(FillBCCT::cell_size_for_density(0.25, 0.1, 0.6, 0.) == Approx(0.));
 }
 
 TEST_CASE("Fill: BCCT produces clipped layer paths", "[Fill][BCCT]") {
@@ -77,6 +78,56 @@ TEST_CASE("Fill: BCCT produces clipped layer paths", "[Fill][BCCT]") {
     REQUIRE_FALSE(layer_two.empty());
     REQUIRE(diff_pl(layer_two, offset(expolygon, float(SCALED_EPSILON * 10))).empty());
     REQUIRE(layer_one != layer_two);
+}
+
+TEST_CASE("Fill: BCCT extrusion volume follows requested density", "[Fill][BCCT]") {
+    struct Settings { float density, width, height; unsigned int layers; };
+    const Settings settings[] = {
+        {0.02f, 0.60f, 0.16f, 1}, {0.03f, 0.60f, 0.16f, 1},
+        {0.05f, 0.60f, 0.16f, 1}, {0.15f, 0.45f, 0.20f, 1},
+        {0.05f, 0.60f, 0.16f, 2}, {0.05f, 0.45f, 0.08f, 3}
+    };
+    for (const Settings &s : settings) {
+        CAPTURE(s.density, s.width, s.height, s.layers);
+        FillParams params;
+        params.density = s.density;
+        params.layer_height = s.height;
+        const double span = double(s.height) * s.layers;
+        params.flow = Flow(s.width, float(span), 0.4f);
+        const double area = params.flow.mm3_per_mm();
+        // Independent material budget: XY-projected length per unit cell,
+        // multiplied by the number of overlapping extrusion slabs.
+        const double budget = area * (1. + 2. * std::sqrt(2.) + std::sqrt(5.)) *
+                              (span + s.width) / span;
+        const double d = 2. * s.height * std::ceil(std::sqrt(budget / s.density) / (2. * s.height));
+        const double period = 2. * d;
+        const double expected_density = budget / (d * d);
+        REQUIRE(expected_density <= s.density * (1. + 1e-6));
+
+        std::unique_ptr<Fill> filler(Fill::new_from_type("bcct"));
+        filler->angle = 0.f;
+        // Measure a complete periodic XY domain without perimeter offsets.
+        filler->spacing = 0.;
+        // Keep twin-plane struts inside the domain: polygon clipping omits
+        // paths that lie exactly on a polygon boundary.
+        const double origin = 0.123 * period;
+        Surface surface(stInternal, ExPolygon(Points {
+            Point::new_scale(origin, origin), Point::new_scale(origin + period, origin),
+            Point::new_scale(origin + period, origin + period), Point::new_scale(origin, origin + period)
+        }));
+        surface.thickness_layers = s.layers;
+        double path_length = 0.;
+        // Multiple periods also cover combined-layer intervals that do not
+        // divide a single period exactly.
+        const int count = int(std::lround(period / s.height));
+        for (int layer = 1; layer <= count; ++layer) {
+            filler->z = layer * span;
+            for (const Polyline &line : filler->fill_surface(&surface, params))
+                path_length += unscale<double>(line.length());
+        }
+        const double volume = period * period * count * span;
+        REQUIRE(path_length * area / volume == Approx(expected_density).epsilon(0.001));
+    }
 }
 
 #if 0

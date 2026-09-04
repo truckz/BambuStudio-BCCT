@@ -13,7 +13,7 @@ The buildable source, BCCT implementation, tests, UI icon, and macOS Bambu Conne
 - Adds **BCCT Experimental** to the sparse-infill pattern list.
 - Generates the structure through Bambu Studio's normal layerwise infill system.
 - Varies the clipped strut geometry with Z to preserve three-dimensional BCC connectivity and reflected twin domains.
-- Maps requested density to cell size using extrusion cross-section and sheared member length.
+- Maps requested density to cell size using extrusion cross-section, XY-projected member length, and overlap between extrusion layers.
 - Includes the BCCT pattern icon at `resources/images/param_bcct.svg`.
 - On macOS, changes the print action to **Send with Bambu Connect**.
 
@@ -62,7 +62,13 @@ Added specifically for FDM:
 - Layer-slab intersection of three-dimensional struts.
 - Extrusion-width overlap between layers.
 - Cell-size quantization to whole layer intervals.
-- Density mapping based on extrusion cross-section and sheared member length.
+- Density mapping based on the generated XY paths and overlapping layer slabs, including combined infill intervals.
+
+The density calculation budgets nominal extrusion volume. It accounts for the repeated material deposited by overlapping layer slabs; earlier builds used only 3D strut length and substantially exceeded the requested density. Corrected cell sizes are larger at the same percentage. Cell-size rounding to whole layer intervals can lower the nominal density, and clipping at part boundaries can change it further. Filament flow multipliers apply afterward.
+
+This calculation assumes a repeating region with constant layer height, line width, and infill combination interval. Changes to those settings within a part can change the lattice scale and alignment. Extrusion overlap and the shape of deposited beads also mean nominal extrusion volume is not a measurement of the printed solid fraction.
+
+Validation includes generated-path volume tests across six density/width/height/combination settings and fresh macOS CLI slices. In a sampled interior of the 42 mm cube at 5%, with 0.60 mm lines and 0.16 mm layers, nominal extrusion volume fell from 17.41% before the correction to 4.69% afterward, before the filament flow multiplier. With combined infill enabled, it measured 4.64%.
 
 ## Generated test files
 
@@ -74,6 +80,8 @@ The `output/` directory contains generated 3MF and pre-sliced G-code 3MF example
 - Zero side walls and zero top layers.
 
 Open the ordinary `.3mf` with this source build to inspect or reslice it. Files ending in `_OFFICIAL_SEND.gcode.3mf` are legacy test artifacts from before the Bambu Connect handoff and are no longer required by the current macOS workflow.
+
+The checked-in pre-sliced examples predate the density correction. Reslice the ordinary `.3mf` to use the corrected calculation; existing G-code retains the old, denser paths.
 
 ## Historical patch snapshot
 
