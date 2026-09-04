@@ -14,7 +14,7 @@ The buildable source, BCCT implementation, tests, UI icon, and macOS Bambu Conne
 - Generates the structure through Bambu Studio's normal layerwise infill system.
 - Varies the clipped strut geometry with Z to preserve three-dimensional BCC connectivity and reflected twin domains.
 - Maps requested density to cell size using extrusion cross-section, XY-projected member length, and overlap between extrusion layers.
-- Includes the BCCT pattern icon at `resources/images/param_bcct.svg`.
+- Includes a geometry-derived, two-tone BCCT icon at `resources/images/param_bcct.svg`. Dark and grey projected struts show different lattice depths; the square border matches Bambu Studio's built-in icon style.
 - On macOS, changes the print action to **Send with Bambu Connect**.
 
 This is research software. No claim is made that an FDM print reproduces the mechanical improvements reported in the paper. Physical testing is required.
